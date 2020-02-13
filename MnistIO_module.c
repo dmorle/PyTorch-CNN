@@ -1,7 +1,13 @@
 #define PY_SSIZE_T_CLEAN
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+
 #include <stdio.h>
+#include <stdlib.h>
 #include <Python.h>
+#include <byteswap.h>
 #include <numpy/arrayobject.h>
+
+#define BUFITEM_READ_SIZE 1024
 
 /*
  *
@@ -51,7 +57,7 @@ static PyMethodDef MnistIOMethods[] = {
 
 static struct PyModuleDef MnistIOModule = {
         PyModuleDef_HEAD_INIT,
-        "demo",   /* name of module */
+        "MnsitIO",   /* name of module */
         NULL, /* module documentation, may be NULL */
         -1,       /* size of per-interpreter state of the module,
                  or -1 if the module keeps state in global variables. */
@@ -59,7 +65,7 @@ static struct PyModuleDef MnistIOModule = {
 };
 
 // Module name must be test in compile and linked
-PyMODINIT_FUNC PyInit_MnistIO()
+PyMODINIT_FUNC PyInit_MnistIO(void)
 {
     import_array()
     return PyModule_Create(&MnistIOModule);
@@ -100,10 +106,10 @@ int main(int argc, char *argv[])
 // header structure for image files
 typedef struct tagImgHeader
 {
-    int magicNum;
-    int imgNum;
-    int rowNum;
-    int colNum;
+    unsigned int magicNum;
+    unsigned int imgNum;
+    unsigned int rowNum;
+    unsigned int colNum;
 } imgHeader;
 
 // return structure for loading images
@@ -118,40 +124,46 @@ typedef struct tagImgData
 // header structure for label files
 typedef struct tagLblHeader
 {
-    int magicNum;
-    int lblNum;
+    unsigned int magicNum;
+    unsigned int lblNum;
 } lblHeader;
 
 // TODO: create the necessary helper functions
-imgData *loadImageFile(int magicNum, const char *path)
+imgData *loadImageFile(unsigned int magicNum, const char *path)
 {
     FILE *pF;
     if ( !(pF = fopen(path, "rb")) )
         return NULL;    // error opening file
 
-    imgHeader fileInfo;
-    if (fread(&fileInfo, sizeof(imgHeader), 1, pF) != 1)
+    imgHeader *pFileInfo = alloca(sizeof(imgHeader));
+    if (fread(pFileInfo, sizeof(imgHeader), 1, pF) != 1)
         return NULL;    // error with file on disk
 
-    if (ferror(pF) || fileInfo.magicNum != magicNum)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+
+    pFileInfo->magicNum = __bswap_32(pFileInfo->magicNum);
+    pFileInfo->imgNum   = __bswap_32(pFileInfo->imgNum);
+    pFileInfo->rowNum   = __bswap_32(pFileInfo->rowNum);
+    pFileInfo->colNum   = __bswap_32(pFileInfo->colNum);
+
+#endif
+
+    if (pFileInfo->magicNum != magicNum)
         return NULL;    // error with file on disk
 
     unsigned char *data = (unsigned char *)malloc(
-            sizeof(unsigned char) * fileInfo.imgNum * fileInfo.colNum * fileInfo.rowNum);
+            sizeof(unsigned char) * pFileInfo->imgNum * pFileInfo->colNum * pFileInfo->rowNum);
 
     imgData* pRet = (imgData *)malloc(sizeof(imgData));
 
-    if (fread(&data, fileInfo.colNum * fileInfo.rowNum, fileInfo.imgNum, pF) != fileInfo.imgNum) {
-        // error occurred while reading image data
-        free(pRet->data);
-        free(pRet);
-        return NULL;
-    }
+    // while loop reading the binary data
+    while (fread(data, BUFITEM_READ_SIZE, 1, pF) == BUFITEM_READ_SIZE);
+    fclose(pF);
 
     pRet->data   = data;
-    pRet->rowNum = fileInfo.rowNum;
-    pRet->colNum = fileInfo.colNum;
-    pRet->imgNum = fileInfo.imgNum;
+    pRet->rowNum = (int)(pFileInfo->rowNum % INT_MAX);
+    pRet->colNum = (int)(pFileInfo->colNum % INT_MAX);
+    pRet->imgNum = (int)(pFileInfo->imgNum % INT_MAX);
 
     return pRet;
 }
@@ -164,12 +176,15 @@ imgData *loadImageFile(int magicNum, const char *path)
 
 static PyObject *loadTrainingSet(PyObject* self, PyObject* args)
 {
-    // TODO: load the training set
-    imgData *pRet = loadImageFile(0x00000801, "data/train-images.idx3-ubyte");
+    imgData *pRet = loadImageFile(0x00000803, "./data/train-images.idx3-ubyte");
+    if (!pRet) {
+        fprintf(stderr, "error loading training image file\n");
+        Py_RETURN_NONE;
+    }
 
-    npy_intp dims[3] = {pRet->rowNum, pRet->colNum, pRet->imgNum};
+    npy_intp dims[] = {pRet->imgNum, pRet->colNum, pRet->rowNum};
 
-    PyObject *npArr = PyArray_SimpleNewFromData(1, dims, NPY_UBYTE, pRet->data);
+    PyObject *npArr = PyArray_SimpleNewFromData(3, dims, NPY_UBYTE, pRet->data);
     Py_INCREF(npArr);
 
     free(pRet);
