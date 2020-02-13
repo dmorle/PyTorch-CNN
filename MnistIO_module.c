@@ -93,11 +93,68 @@ int main(int argc, char *argv[])
 
 /*
  *
- * Helper Functions
+ * Helper Functions & structs
  *
  */
 
-// TODO: create the nessisary helper functions
+// header structure for image files
+typedef struct tagImgHeader
+{
+    int magicNum;
+    int imgNum;
+    int rowNum;
+    int colNum;
+} imgHeader;
+
+// return structure for loading images
+typedef struct tagImgData
+{
+    unsigned char *data;
+    int rowNum;
+    int colNum;
+    int imgNum;
+} imgData;
+
+// header structure for label files
+typedef struct tagLblHeader
+{
+    int magicNum;
+    int lblNum;
+} lblHeader;
+
+// TODO: create the necessary helper functions
+imgData *loadImageFile(int magicNum, const char *path)
+{
+    FILE *pF;
+    if ( !(pF = fopen(path, "rb")) )
+        return NULL;    // error opening file
+
+    imgHeader fileInfo;
+    if (fread(&fileInfo, sizeof(imgHeader), 1, pF) != 1)
+        return NULL;    // error with file on disk
+
+    if (ferror(pF) || fileInfo.magicNum != magicNum)
+        return NULL;    // error with file on disk
+
+    unsigned char *data = (unsigned char *)malloc(
+            sizeof(unsigned char) * fileInfo.imgNum * fileInfo.colNum * fileInfo.rowNum);
+
+    imgData* pRet = (imgData *)malloc(sizeof(imgData));
+
+    if (fread(&data, fileInfo.colNum * fileInfo.rowNum, fileInfo.imgNum, pF) != fileInfo.imgNum) {
+        // error occurred while reading image data
+        free(pRet->data);
+        free(pRet);
+        return NULL;
+    }
+
+    pRet->data   = data;
+    pRet->rowNum = fileInfo.rowNum;
+    pRet->colNum = fileInfo.colNum;
+    pRet->imgNum = fileInfo.imgNum;
+
+    return pRet;
+}
 
 /*
  *
@@ -108,7 +165,15 @@ int main(int argc, char *argv[])
 static PyObject *loadTrainingSet(PyObject* self, PyObject* args)
 {
     // TODO: load the training set
-    Py_RETURN_NONE;
+    imgData *pRet = loadImageFile(0x00000801, "data/train-images.idx3-ubyte");
+
+    npy_intp dims[3] = {pRet->rowNum, pRet->colNum, pRet->imgNum};
+
+    PyObject *npArr = PyArray_SimpleNewFromData(1, dims, NPY_UBYTE, pRet->data);
+    Py_INCREF(npArr);
+
+    free(pRet);
+    return npArr;
 }
 
 static PyObject *loadTrainingLabels(PyObject* self, PyObject* args)
