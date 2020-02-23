@@ -4,11 +4,7 @@ import numpy as np
 
 
 def main():
-    print(dir(MnistIO))
-    data = MnistIO.C_loadTrainingSet()
-
-    plt.imshow(data[0])
-    plt.show()
+    return
 
 
 if __name__ == "__main__":

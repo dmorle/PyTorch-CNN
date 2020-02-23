@@ -7,7 +7,7 @@
 #include <byteswap.h>
 #include <numpy/arrayobject.h>
 
-#define BUFITEM_READ_SIZE 1024
+#define BUF_ITEM_READ_SIZE 1024
 
 /*
  *
@@ -57,7 +57,7 @@ static PyMethodDef MnistIOMethods[] = {
 
 static struct PyModuleDef MnistIOModule = {
         PyModuleDef_HEAD_INIT,
-        "MnsitIO",   /* name of module */
+        "MnistIO",   /* name of module */
         NULL, /* module documentation, may be NULL */
         -1,       /* size of per-interpreter state of the module,
                  or -1 if the module keeps state in global variables. */
@@ -116,9 +116,9 @@ typedef struct tagImgHeader
 typedef struct tagImgData
 {
     unsigned char *data;
-    int rowNum;
-    int colNum;
-    int imgNum;
+    unsigned int rowNum;
+    unsigned int colNum;
+    unsigned int imgNum;
 } imgData;
 
 // header structure for label files
@@ -128,7 +128,13 @@ typedef struct tagLblHeader
     unsigned int lblNum;
 } lblHeader;
 
-// TODO: create the necessary helper functions
+// return structure for label files
+typedef struct tagLblData
+{
+    unsigned char *data;
+    unsigned int lblNum;
+} lblData;
+
 imgData *loadImageFile(unsigned int magicNum, const char *path)
 {
     FILE *pF;
@@ -142,9 +148,9 @@ imgData *loadImageFile(unsigned int magicNum, const char *path)
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 
     pFileInfo->magicNum = __bswap_32(pFileInfo->magicNum);
-    pFileInfo->imgNum   = __bswap_32(pFileInfo->imgNum);
-    pFileInfo->rowNum   = __bswap_32(pFileInfo->rowNum);
-    pFileInfo->colNum   = __bswap_32(pFileInfo->colNum);
+    pFileInfo->imgNum   = __bswap_32(pFileInfo->imgNum  );
+    pFileInfo->rowNum   = __bswap_32(pFileInfo->rowNum  );
+    pFileInfo->colNum   = __bswap_32(pFileInfo->colNum  );
 
 #endif
 
@@ -157,13 +163,48 @@ imgData *loadImageFile(unsigned int magicNum, const char *path)
     imgData* pRet = (imgData *)malloc(sizeof(imgData));
 
     // while loop reading the binary data
-    while (fread(data, BUFITEM_READ_SIZE, 1, pF) == BUFITEM_READ_SIZE);
+    while (fread(data, BUF_ITEM_READ_SIZE, 1, pF) == BUF_ITEM_READ_SIZE);
     fclose(pF);
 
     pRet->data   = data;
-    pRet->rowNum = (int)(pFileInfo->rowNum % INT_MAX);
-    pRet->colNum = (int)(pFileInfo->colNum % INT_MAX);
-    pRet->imgNum = (int)(pFileInfo->imgNum % INT_MAX);
+    pRet->rowNum = pFileInfo->rowNum;
+    pRet->colNum = pFileInfo->colNum;
+    pRet->imgNum = pFileInfo->imgNum;
+
+    return pRet;
+}
+
+lblData *loadLabelFile(unsigned int magicNum, const char *path)
+{
+    FILE *pF;
+    if ( !(pF = fopen(path, "rb")) )
+        return NULL;    // error opening file
+
+    lblHeader *pFileInfo = alloca(sizeof(lblHeader));
+    if (fread(pFileInfo, sizeof(lblHeader), 1, pF) != 1)
+        return NULL;    // error with file on disk
+
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+
+    pFileInfo->magicNum = __bswap_32(pFileInfo->magicNum);
+    pFileInfo->lblNum   = __bswap_32(pFileInfo->lblNum  );
+
+#endif
+
+    if (pFileInfo->magicNum != magicNum)
+        return NULL;    // error with file on disk
+
+    unsigned char *data = (unsigned char *)malloc(
+            sizeof(unsigned char) * pFileInfo->lblNum);
+
+    lblData *pRet = (lblData *)malloc(sizeof(imgData));
+
+    // while loop reading the binary data
+    while (fread(data, BUF_ITEM_READ_SIZE, 1, pF) == BUF_ITEM_READ_SIZE);
+    fclose(pF);
+
+    pRet->data   = data;
+    pRet->lblNum = pFileInfo->lblNum;
 
     return pRet;
 }
@@ -193,18 +234,51 @@ static PyObject *loadTrainingSet(PyObject* self, PyObject* args)
 
 static PyObject *loadTrainingLabels(PyObject* self, PyObject* args)
 {
-    // TODO: load the training labels
-    Py_RETURN_NONE;
+    lblData *pRet = loadLabelFile(0x00000801, "./data/train-labels.idx1-ubyte");
+    if (!pRet) {
+        fprintf(stderr, "error loading training labels file\n");
+        Py_RETURN_NONE;
+    }
+
+    npy_intp dims[] = {pRet->lblNum};
+
+    PyObject *npArr = PyArray_SimpleNewFromData(1, dims, NPY_UBYTE, pRet->data);
+    Py_INCREF(npArr);
+
+    free(pRet);
+    return npArr;
 }
 
 static PyObject *loadTestingSet(PyObject* self, PyObject* args)
 {
-    // TODO: load the testing set
-    Py_RETURN_NONE;
+    imgData *pRet = loadImageFile(0x00000803, "./data/t10k-images.idx3-ubyte");
+    if (!pRet) {
+        fprintf(stderr, "error loading testing image file\n");
+        Py_RETURN_NONE;
+    }
+
+    npy_intp dims[] = {pRet->imgNum, pRet->colNum, pRet->rowNum};
+
+    PyObject *npArr = PyArray_SimpleNewFromData(3, dims, NPY_UBYTE, pRet->data);
+    Py_INCREF(npArr);
+
+    free(pRet);
+    return npArr;
 }
 
 static PyObject *loadTestingLabels(PyObject* self, PyObject* args)
 {
-    // TODO: load the testing labels
-    Py_RETURN_NONE;
+    lblData *pRet = loadLabelFile(0x00000801, "./data/train-labels.idx1-ubyte");
+    if (!pRet) {
+        fprintf(stderr, "error loading testing labels file\n");
+        Py_RETURN_NONE;
+    }
+
+    npy_intp dims[] = {pRet->lblNum};
+
+    PyObject *npArr = PyArray_SimpleNewFromData(1, dims, NPY_UBYTE, pRet->data);
+    Py_INCREF(npArr);
+
+    free(pRet);
+    return npArr;
 }
