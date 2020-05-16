@@ -1,3 +1,3 @@
-# Tensorflow - Multilayer Perceptron
+# PyTorch - Convolutional Neural Network
 
-Tensorflow implementation of a multilayer perceptron for the MNIST handwritten digit dataset.
+Pytorch implementation of a Convolutional Neural Network for the MNIST handwritten digit dataset.
